@@ -72,7 +72,7 @@ class SendTelegramView(APIView):
         if not bot_token:
             return Response({'detail': 'Bot token not configured'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Optional: verify user exists to align with our model
+        # Check if user exists
         try:
             user = User.objects.get(telegram_id=telegram_id)
         except User.DoesNotExist:
