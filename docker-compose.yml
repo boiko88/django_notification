@@ -10,9 +10,29 @@ services:
       - .env
     volumes:
       - .:/app
-      - sqlite_data:/app/notifications
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: django_notification_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     restart: unless-stopped
 
-volumes:
-  sqlite_data:
-    driver: local
+  worker:
+    build: .
+    container_name: django_notification_worker
+    env_file:
+      - .env
+    working_dir: /app/notifications
+    volumes:
+      - .:/app
+    depends_on:
+      - rabbitmq
+    entrypoint: ["/bin/sh", "-c", "celery -A notifications.celery:app worker -l info"]

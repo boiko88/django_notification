@@ -8,6 +8,7 @@ import os
 import requests
 
 from .serializers import SendEmailSerializer, SendTelegramSerializer
+from .tasks import send_notification_task
 
 
 class SendNotificationView(APIView):
@@ -29,36 +30,9 @@ class SendNotificationView(APIView):
             last_channel=ChannelChoices.EMAIL,
         )
 
-        try:
-            send_mail(
-                'Notification',
-                message,
-                'no-reply@example.com',
-                [user_email],
-                fail_silently=False,
-            )
-            DeliveryAttempt.objects.create(
-                notification=notification,
-                channel=ChannelChoices.EMAIL,
-                status=AttemptStatus.SUCCESS,
-            )
-            notification.status = NotificationStatus.SENT
-            notification.sent_at = notification.updated_at
-            notification.attempts = notification.attempts + 1
-            notification.save(update_fields=['status', 'sent_at', 'attempts'])
-            return Response({'detail': 'Email sent successfully', 'notification_id': notification.id}, status=status.HTTP_200_OK)
-        except Exception as exc:
-            DeliveryAttempt.objects.create(
-                notification=notification,
-                channel=ChannelChoices.EMAIL,
-                status=AttemptStatus.FAILURE,
-                error=str(exc),
-            )
-            notification.status = NotificationStatus.FAILED
-            notification.error = str(exc)
-            notification.attempts = notification.attempts + 1
-            notification.save(update_fields=['status', 'error', 'attempts'])
-            return Response({'detail': 'Email sending failed', 'error': str(exc), 'notification_id': notification.id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Enqueue async delivery with fallback across channels
+        send_notification_task.delay(notification.id)
+        return Response({'detail': 'Notification queued', 'notification_id': notification.id}, status=status.HTTP_202_ACCEPTED)
 
 
 class SendTelegramView(APIView):
@@ -85,35 +59,6 @@ class SendTelegramView(APIView):
             last_channel=ChannelChoices.TELEGRAM,
         )
 
-        send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {"chat_id": telegram_id, "text": message}
-
-        try:
-            resp = requests.post(send_url, json=payload, timeout=10)
-            data = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
-            if resp.status_code == 200 and data.get('ok'):
-                DeliveryAttempt.objects.create(
-                    notification=notification,
-                    channel=ChannelChoices.TELEGRAM,
-                    status=AttemptStatus.SUCCESS,
-                )
-                notification.status = NotificationStatus.SENT
-                notification.sent_at = notification.updated_at
-                notification.attempts = notification.attempts + 1
-                notification.save(update_fields=['status', 'sent_at', 'attempts'])
-                return Response({'detail': 'Telegram sent', 'notification_id': notification.id}, status=status.HTTP_200_OK)
-            else:
-                error_text = data.get('description') if isinstance(data, dict) else resp.text
-                raise RuntimeError(error_text or f"HTTP {resp.status_code}")
-        except Exception as exc:
-            DeliveryAttempt.objects.create(
-                notification=notification,
-                channel=ChannelChoices.TELEGRAM,
-                status=AttemptStatus.FAILURE,
-                error=str(exc),
-            )
-            notification.status = NotificationStatus.FAILED
-            notification.error = str(exc)
-            notification.attempts = notification.attempts + 1
-            notification.save(update_fields=['status', 'error', 'attempts'])
-            return Response({'detail': 'Telegram sending failed', 'error': str(exc), 'notification_id': notification.id}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Enqueue async delivery with fallback across channels
+        send_notification_task.delay(notification.id)
+        return Response({'detail': 'Notification queued', 'notification_id': notification.id}, status=status.HTTP_202_ACCEPTED)
